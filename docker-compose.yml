@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  calendar-sync:
+    build: .
+    container_name: google-calendar-sync
+    volumes:
+      - ./tokens:/usr/src/app/tokens
+      - ./data:/usr/src/app/data
+      - ./.env:/usr/src/app/.env
+      - ./oauth2credentials.json:/usr/src/app/oauth2credentials.json
+    restart: unless-stopped
+    ports:
+      - 80:80
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "try { require('fs').accessSync('/usr/src/app/tokens/work_token.json'); require('fs').accessSync('/usr/src/app/tokens/personal_token.json'); process.exit(0); } catch(e) { process.exit(1); }",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
