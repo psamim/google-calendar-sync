@@ -14,6 +14,7 @@ const SYNC_INTERVAL_MINUTES = parseInt(process.env.SYNC_INTERVAL_MINUTES) || 30;
 const WORK_TOKEN_PATH = process.env.WORK_TOKEN_PATH || "tokens/work_token.json";
 const PERSONAL_TOKEN_PATH =
   process.env.PERSONAL_TOKEN_PATH || "tokens/personal_token.json";
+const EVENT_PREFIX = process.env.EVENT_PREFIX || "";
 
 // Create a map to store synced events
 const syncedEvents = new Map();
@@ -184,7 +185,9 @@ async function createPersonalEvent(personalCalendar, workEvent) {
 
   // Create a copy of the work event for the personal calendar
   const personalEvent = {
-    summary: `[Work] ${workEvent.summary || "Busy"}`,
+    summary: EVENT_PREFIX
+      ? `${EVENT_PREFIX} ${workEvent.summary || "Busy"}`
+      : workEvent.summary || "Busy",
     location: workEvent.location,
     description: workEvent.description
       ? `${workEvent.description}\n\n(Synced from work calendar)`
@@ -239,7 +242,9 @@ async function updatePersonalEvent(
 ) {
   // Create an updated version of the personal event
   const updatedEvent = {
-    summary: `[Work] ${workEvent.summary || "Busy"}`,
+    summary: EVENT_PREFIX
+      ? `${EVENT_PREFIX} ${workEvent.summary || "Busy"}`
+      : workEvent.summary || "Busy",
     location: workEvent.location,
     description: workEvent.description
       ? `${workEvent.description}\n\n(Synced from work calendar)`

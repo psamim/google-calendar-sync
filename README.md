@@ -24,6 +24,7 @@ A Node.js application that syncs events from your work calendar to your personal
    DAYS_TO_SYNC_PAST=7
    DAYS_TO_SYNC_FUTURE=30
    SYNC_INTERVAL_MINUTES=30
+   EVENT_PREFIX=[Work]
    ```
 4. Set up OAuth credentials:
    - Go to Google Cloud Console
@@ -52,6 +53,7 @@ The script will:
 - `DAYS_TO_SYNC_PAST`: Number of past days to sync (default: 7)
 - `DAYS_TO_SYNC_FUTURE`: Number of future days to sync (default: 30)
 - `SYNC_INTERVAL_MINUTES`: How often to sync (default: 30)
+- `EVENT_PREFIX`: Prefix to add to synced event titles (default: none)
 
 ## Security
 
