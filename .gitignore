@@ -1,0 +1,17 @@
+# OAuth tokens and credentials
+oauth2credentials.json
+work_token.json
+personal_token.json
+synced_events.json
+
+# Environment variables
+.env
+
+# Node modules
+node_modules/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store 

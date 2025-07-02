@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+work_token.json
+personal_token.json
+synced_events.json
+.env
+.git
+.gitignore
+README.md 
