@@ -2,7 +2,8 @@
 oauth2credentials.json
 work_token.json
 personal_token.json
-synced_events.json
+synced_personal_events.json
+synced_nextcloud_events.json
 
 # Environment variables
 .env

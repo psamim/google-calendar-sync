@@ -4,10 +4,17 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { google } from "googleapis";
 import { schedule } from "node-cron";
 import http from "http";
+import fetch from "node-fetch";
+import ical from "ical.js";
 
 // Configuration
 const WORK_CALENDAR_ID = process.env.WORK_CALENDAR_ID;
 const PERSONAL_CALENDAR_ID = process.env.PERSONAL_CALENDAR_ID;
+const NEXTCLOUD_CALENDAR_URL =
+  process.env.NEXTCLOUD_CALENDAR_URL ||
+  "https://next.psam.im/remote.php/dav/calendars/psamim/samim-work/";
+const NEXTCLOUD_USERNAME = process.env.NEXTCLOUD_USERNAME;
+const NEXTCLOUD_PASSWORD = process.env.NEXTCLOUD_PASSWORD;
 const DAYS_TO_SYNC_PAST = parseInt(process.env.DAYS_TO_SYNC_PAST) || 7;
 const DAYS_TO_SYNC_FUTURE = parseInt(process.env.DAYS_TO_SYNC_FUTURE) || 30;
 const SYNC_INTERVAL_MINUTES = parseInt(process.env.SYNC_INTERVAL_MINUTES) || 30;
@@ -16,18 +23,34 @@ const PERSONAL_TOKEN_PATH =
   process.env.PERSONAL_TOKEN_PATH || "tokens/personal_token.json";
 const EVENT_PREFIX = process.env.EVENT_PREFIX || "";
 
-// Create a map to store synced events
-const syncedEvents = new Map();
-const SYNCED_EVENTS_FILE =
-  process.env.SYNCED_EVENTS_FILE || "data/synced_events.json";
+// Create maps to store synced events for both calendars
+const syncedPersonalEvents = new Map();
+const syncedNextcloudEvents = new Map();
+const SYNCED_PERSONAL_EVENTS_FILE =
+  process.env.SYNCED_PERSONAL_EVENTS_FILE || "data/synced_personal_events.json";
+const SYNCED_NEXTCLOUD_EVENTS_FILE =
+  process.env.SYNCED_NEXTCLOUD_EVENTS_FILE ||
+  "data/synced_nextcloud_events.json";
 
-// Load previously synced events if file exists
-if (existsSync(SYNCED_EVENTS_FILE)) {
-  const data = JSON.parse(readFileSync(SYNCED_EVENTS_FILE));
+// Load previously synced events if files exist
+if (existsSync(SYNCED_PERSONAL_EVENTS_FILE)) {
+  const data = JSON.parse(readFileSync(SYNCED_PERSONAL_EVENTS_FILE));
   Object.entries(data).forEach(([key, value]) => {
-    syncedEvents.set(key, value);
+    syncedPersonalEvents.set(key, value);
   });
-  console.log(`Loaded ${syncedEvents.size} previously synced events`);
+  console.log(
+    `Loaded ${syncedPersonalEvents.size} previously synced personal events`
+  );
+}
+
+if (existsSync(SYNCED_NEXTCLOUD_EVENTS_FILE)) {
+  const data = JSON.parse(readFileSync(SYNCED_NEXTCLOUD_EVENTS_FILE));
+  Object.entries(data).forEach(([key, value]) => {
+    syncedNextcloudEvents.set(key, value);
+  });
+  console.log(
+    `Loaded ${syncedNextcloudEvents.size} previously synced Nextcloud events`
+  );
 }
 
 // Set up OAuth2 authentication
@@ -121,6 +144,353 @@ async function getCalendarClients() {
 
 // Add rate limiting helper
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// CalDAV helper functions for Nextcloud
+async function makeCalDAVRequest(
+  url,
+  method = "GET",
+  body = null,
+  headers = {}
+) {
+  const auth = Buffer.from(
+    `${NEXTCLOUD_USERNAME}:${NEXTCLOUD_PASSWORD}`
+  ).toString("base64");
+
+  const requestHeaders = {
+    Authorization: `Basic ${auth}`,
+    "Content-Type": "text/calendar; charset=utf-8",
+    ...headers,
+  };
+
+  const options = {
+    method,
+    headers: requestHeaders,
+  };
+
+  if (body) {
+    options.body = body;
+  }
+
+  try {
+    const response = await fetch(url, options);
+
+    if (!response.ok) {
+      throw new Error(
+        `CalDAV request failed: ${response.status} ${response.statusText}`
+      );
+    }
+
+    return response;
+  } catch (error) {
+    console.error("CalDAV request error:", error.message);
+    throw error;
+  }
+}
+
+// Get events from Nextcloud calendar
+async function getNextcloudEvents() {
+  try {
+    const response = await makeCalDAVRequest(NEXTCLOUD_CALENDAR_URL);
+    const calendarData = await response.text();
+
+    if (!calendarData.trim()) {
+      console.log("Nextcloud calendar is empty");
+      return [];
+    }
+
+    const calendar = new ical.Component(["vcalendar", [], []]);
+    calendar.parseICS(calendarData);
+
+    const events = calendar.getAllSubcomponents("vevent");
+    console.log(`Found ${events.length} events in Nextcloud calendar`);
+
+    return events;
+  } catch (error) {
+    console.error("Error fetching Nextcloud events:", error.message);
+    return [];
+  }
+}
+
+// Create an event in Nextcloud calendar
+async function createNextcloudEvent(workEvent) {
+  // Skip declined events
+  if (
+    workEvent.attendees &&
+    workEvent.attendees.some((a) => a.self && a.responseStatus === "declined")
+  ) {
+    console.log(`Skipping declined event for Nextcloud: ${workEvent.summary}`);
+    return null;
+  }
+
+  try {
+    const event = new ical.Event();
+
+    // Set event properties
+    event.component.addPropertyWithValue(
+      "summary",
+      EVENT_PREFIX
+        ? `${EVENT_PREFIX} ${workEvent.summary || "Busy"}`
+        : workEvent.summary || "Busy"
+    );
+
+    if (workEvent.location) {
+      event.component.addPropertyWithValue("location", workEvent.location);
+    }
+
+    if (workEvent.description) {
+      event.component.addPropertyWithValue(
+        "description",
+        `${workEvent.description}\n\n(Synced from work calendar)`
+      );
+    } else {
+      event.component.addPropertyWithValue(
+        "description",
+        "Synced from work calendar"
+      );
+    }
+
+    // Set start and end times
+    if (workEvent.start.dateTime) {
+      const startDate = new Date(workEvent.start.dateTime);
+      const startTime = new ical.Time({
+        year: startDate.getFullYear(),
+        month: startDate.getMonth() + 1,
+        day: startDate.getDate(),
+        hour: startDate.getHours(),
+        minute: startDate.getMinutes(),
+        second: startDate.getSeconds(),
+        isDate: false,
+      });
+      event.component.addPropertyWithValue("dtstart", startTime);
+    }
+
+    if (workEvent.end.dateTime) {
+      const endDate = new Date(workEvent.end.dateTime);
+      const endTime = new ical.Time({
+        year: endDate.getFullYear(),
+        month: endDate.getMonth() + 1,
+        day: endDate.getDate(),
+        hour: endDate.getHours(),
+        minute: endDate.getMinutes(),
+        second: endDate.getSeconds(),
+        isDate: false,
+      });
+      event.component.addPropertyWithValue("dtend", endTime);
+    }
+
+    // Set transparency
+    if (workEvent.transparency === "transparent") {
+      event.component.addPropertyWithValue("transp", "TRANSPARENT");
+    } else {
+      event.component.addPropertyWithValue("transp", "OPAQUE");
+    }
+
+    // Add custom property to identify as synced event
+    event.component.addPropertyWithValue(
+      "x-synced-from-work-event",
+      workEvent.id
+    );
+
+    // Generate unique filename for the event
+    const eventId = workEvent.id.replace(/[^a-zA-Z0-9]/g, "_");
+    const eventUrl = `${NEXTCLOUD_CALENDAR_URL}${eventId}.ics`;
+
+    // Convert event to iCalendar format
+    const calendar = new ical.Component(["vcalendar", [], []]);
+    calendar.addSubcomponent(event.component);
+    const icalData = calendar.toString();
+
+    console.log(
+      `Attempting to create Nextcloud event: ${event.component.getFirstPropertyValue(
+        "summary"
+      )}`
+    );
+
+    const response = await makeCalDAVRequest(eventUrl, "PUT", icalData);
+
+    console.log(
+      `Created Nextcloud event: ${event.component.getFirstPropertyValue(
+        "summary"
+      )}`
+    );
+    return { id: eventId, url: eventUrl };
+  } catch (error) {
+    console.error("Error creating Nextcloud event:", error.message);
+    return null;
+  }
+}
+
+// Update an existing Nextcloud event
+async function updateNextcloudEvent(eventId, workEvent) {
+  try {
+    const event = new ical.Event();
+
+    // Set event properties
+    event.component.addPropertyWithValue(
+      "summary",
+      EVENT_PREFIX
+        ? `${EVENT_PREFIX} ${workEvent.summary || "Busy"}`
+        : workEvent.summary || "Busy"
+    );
+
+    if (workEvent.location) {
+      event.component.addPropertyWithValue("location", workEvent.location);
+    }
+
+    if (workEvent.description) {
+      event.component.addPropertyWithValue(
+        "description",
+        `${workEvent.description}\n\n(Synced from work calendar)`
+      );
+    } else {
+      event.component.addPropertyWithValue(
+        "description",
+        "Synced from work calendar"
+      );
+    }
+
+    // Set start and end times
+    if (workEvent.start.dateTime) {
+      const startDate = new Date(workEvent.start.dateTime);
+      const startTime = new ical.Time({
+        year: startDate.getFullYear(),
+        month: startDate.getMonth() + 1,
+        day: startDate.getDate(),
+        hour: startDate.getHours(),
+        minute: startDate.getMinutes(),
+        second: startDate.getSeconds(),
+        isDate: false,
+      });
+      event.component.addPropertyWithValue("dtstart", startTime);
+    }
+
+    if (workEvent.end.dateTime) {
+      const endDate = new Date(workEvent.end.dateTime);
+      const endTime = new ical.Time({
+        year: endDate.getFullYear(),
+        month: endDate.getMonth() + 1,
+        day: endDate.getDate(),
+        hour: endDate.getHours(),
+        minute: endDate.getMinutes(),
+        second: endDate.getSeconds(),
+        isDate: false,
+      });
+      event.component.addPropertyWithValue("dtend", endTime);
+    }
+
+    // Set transparency
+    if (workEvent.transparency === "transparent") {
+      event.component.addPropertyWithValue("transp", "TRANSPARENT");
+    } else {
+      event.component.addPropertyWithValue("transp", "OPAQUE");
+    }
+
+    // Add custom property to identify as synced event
+    event.component.addPropertyWithValue(
+      "x-synced-from-work-event",
+      workEvent.id
+    );
+
+    const eventUrl = `${NEXTCLOUD_CALENDAR_URL}${eventId}.ics`;
+
+    // Convert event to iCalendar format
+    const calendar = new ical.Component(["vcalendar", [], []]);
+    calendar.addSubcomponent(event.component);
+    const icalData = calendar.toString();
+
+    console.log(
+      `Attempting to update Nextcloud event: ${event.component.getFirstPropertyValue(
+        "summary"
+      )}`
+    );
+
+    const response = await makeCalDAVRequest(eventUrl, "PUT", icalData);
+
+    console.log(
+      `Updated Nextcloud event: ${event.component.getFirstPropertyValue(
+        "summary"
+      )}`
+    );
+    return { id: eventId, url: eventUrl };
+  } catch (error) {
+    console.error("Error updating Nextcloud event:", error.message);
+    return null;
+  }
+}
+
+// Delete an event from Nextcloud calendar
+async function deleteNextcloudEvent(eventId) {
+  try {
+    const eventUrl = `${NEXTCLOUD_CALENDAR_URL}${eventId}.ics`;
+    await makeCalDAVRequest(eventUrl, "DELETE");
+    console.log(`Deleted Nextcloud event: ${eventId}`);
+    return true;
+  } catch (error) {
+    console.error("Error deleting Nextcloud event:", error.message);
+    return false;
+  }
+}
+
+// Find orphaned Nextcloud events
+async function findOrphanedNextcloudEvents(workEvents) {
+  const orphanedEvents = [];
+
+  for (const [workId, nextcloudId] of syncedNextcloudEvents.entries()) {
+    // Find the corresponding work event if it exists
+    const workEvent = workEvents.find((event) => event.id === workId);
+
+    // Consider an event orphaned if:
+    // 1. The work event doesn't exist anymore, OR
+    // 2. The work event is an all-day event (has date instead of dateTime), OR
+    // 3. The work event is declined
+    if (!workEvent) {
+      console.log(
+        `Nextcloud event ${workId} no longer exists in work calendar`
+      );
+      orphanedEvents.push(nextcloudId);
+    } else if (workEvent.start.date !== undefined) {
+      console.log(
+        `Marking all-day event as orphaned in Nextcloud: ${
+          workEvent.summary || "Untitled"
+        } (${workEvent.start.date})`
+      );
+      orphanedEvents.push(nextcloudId);
+    } else if (
+      workEvent.attendees &&
+      workEvent.attendees.some((a) => a.self && a.responseStatus === "declined")
+    ) {
+      console.log(
+        `Marking declined event as orphaned in Nextcloud: ${
+          workEvent.summary || "Untitled"
+        }`
+      );
+      orphanedEvents.push(nextcloudId);
+    }
+  }
+
+  return orphanedEvents;
+}
+
+// Save synced events to files
+function saveSyncedEvents() {
+  const personalData = Object.fromEntries(syncedPersonalEvents);
+  writeFileSync(
+    SYNCED_PERSONAL_EVENTS_FILE,
+    JSON.stringify(personalData, null, 2)
+  );
+  console.log(
+    `Saved ${syncedPersonalEvents.size} synced personal events to file`
+  );
+
+  const nextcloudData = Object.fromEntries(syncedNextcloudEvents);
+  writeFileSync(
+    SYNCED_NEXTCLOUD_EVENTS_FILE,
+    JSON.stringify(nextcloudData, null, 2)
+  );
+  console.log(
+    `Saved ${syncedNextcloudEvents.size} synced Nextcloud events to file`
+  );
+}
 
 // Get events from work calendar
 async function getWorkEvents(workCalendar) {
@@ -295,7 +665,7 @@ async function deletePersonalEvent(personalCalendar, eventId) {
 async function findOrphanedEvents(workCalendar, workEvents) {
   const orphanedEvents = [];
 
-  for (const [workId, personalId] of syncedEvents.entries()) {
+  for (const [workId, personalId] of syncedPersonalEvents.entries()) {
     // Find the corresponding work event if it exists
     const workEvent = workEvents.find((event) => event.id === workId);
 
@@ -327,19 +697,13 @@ async function findOrphanedEvents(workCalendar, workEvents) {
   return orphanedEvents;
 }
 
-// Save synced events to file
-function saveSyncedEvents() {
-  const data = Object.fromEntries(syncedEvents);
-  writeFileSync(SYNCED_EVENTS_FILE, JSON.stringify(data, null, 2));
-  console.log(`Saved ${syncedEvents.size} synced events to file`);
-}
-
 // Main sync function
 async function syncCalendars() {
   console.log("Starting calendar sync...");
   console.log("Using calendar IDs:", {
     work: WORK_CALENDAR_ID,
     personal: PERSONAL_CALENDAR_ID,
+    nextcloud: NEXTCLOUD_CALENDAR_URL,
   });
 
   try {
@@ -349,45 +713,81 @@ async function syncCalendars() {
     const workEvents = await getWorkEvents(calendars.work);
     console.log(`Found ${workEvents.length} work events`);
 
-    // Process each work event with rate limiting
+    // Process each work event for both calendars with rate limiting
     for (const workEvent of workEvents) {
-      const existingPersonalEventId = syncedEvents.get(workEvent.id);
-
+      // Sync to Personal Google Calendar
+      const existingPersonalEventId = syncedPersonalEvents.get(workEvent.id);
       if (existingPersonalEventId) {
-        // Update existing event
         await updatePersonalEvent(
           calendars.personal,
           existingPersonalEventId,
           workEvent
         );
       } else {
-        // Create new event
-        const newEvent = await createPersonalEvent(
+        const newPersonalEvent = await createPersonalEvent(
           calendars.personal,
           workEvent
         );
-        if (newEvent) {
-          syncedEvents.set(workEvent.id, newEvent.id);
+        if (newPersonalEvent) {
+          syncedPersonalEvents.set(workEvent.id, newPersonalEvent.id);
         }
       }
+
+      // Sync to Nextcloud Calendar
+      const existingNextcloudEventId = syncedNextcloudEvents.get(workEvent.id);
+      if (existingNextcloudEventId) {
+        await updateNextcloudEvent(existingNextcloudEventId, workEvent);
+      } else {
+        const newNextcloudEvent = await createNextcloudEvent(workEvent);
+        if (newNextcloudEvent) {
+          syncedNextcloudEvents.set(workEvent.id, newNextcloudEvent.id);
+        }
+      }
+
       // Add a small delay between operations to avoid rate limits
       await sleep(100);
     }
 
-    // Find and delete orphaned events
-    const orphanedEvents = await findOrphanedEvents(calendars.work, workEvents);
-    console.log(`Found ${orphanedEvents.length} orphaned events to delete`);
+    // Find and delete orphaned events from Personal Calendar
+    const orphanedPersonalEvents = await findOrphanedEvents(
+      calendars.work,
+      workEvents
+    );
+    console.log(
+      `Found ${orphanedPersonalEvents.length} orphaned personal events to delete`
+    );
 
-    for (const personalEventId of orphanedEvents) {
+    for (const personalEventId of orphanedPersonalEvents) {
       const deleted = await deletePersonalEvent(
         calendars.personal,
         personalEventId
       );
       if (deleted) {
-        // Find and remove the work event ID from syncedEvents
-        for (const [workId, personalId] of syncedEvents.entries()) {
+        // Find and remove the work event ID from syncedPersonalEvents
+        for (const [workId, personalId] of syncedPersonalEvents.entries()) {
           if (personalId === personalEventId) {
-            syncedEvents.delete(workId);
+            syncedPersonalEvents.delete(workId);
+            break;
+          }
+        }
+      }
+    }
+
+    // Find and delete orphaned events from Nextcloud Calendar
+    const orphanedNextcloudEvents = await findOrphanedNextcloudEvents(
+      workEvents
+    );
+    console.log(
+      `Found ${orphanedNextcloudEvents.length} orphaned Nextcloud events to delete`
+    );
+
+    for (const nextcloudEventId of orphanedNextcloudEvents) {
+      const deleted = await deleteNextcloudEvent(nextcloudEventId);
+      if (deleted) {
+        // Find and remove the work event ID from syncedNextcloudEvents
+        for (const [workId, nextcloudId] of syncedNextcloudEvents.entries()) {
+          if (nextcloudId === nextcloudEventId) {
+            syncedNextcloudEvents.delete(workId);
             break;
           }
         }

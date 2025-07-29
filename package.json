@@ -13,6 +13,8 @@
   "dependencies": {
     "dotenv": "^16.5.0",
     "googleapis": "^150.0.1",
-    "node-cron": "^4.1.0"
+    "ical.js": "^2.2.0",
+    "node-cron": "^4.1.0",
+    "node-fetch": "^3.3.2"
   }
 }
