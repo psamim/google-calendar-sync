@@ -145,6 +145,23 @@ async function getCalendarClients() {
 // Add rate limiting helper
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Helper function to log timezone information for debugging
+function logTimezoneInfo(workEvent, eventType) {
+  console.log(
+    `${eventType} timezone info for event: ${workEvent.summary || "Untitled"}`
+  );
+  if (workEvent.start.dateTime) {
+    console.log(`  Start: ${workEvent.start.dateTime}`);
+    const startDate = new Date(workEvent.start.dateTime);
+    console.log(`  Start parsed: ${startDate.toISOString()}`);
+  }
+  if (workEvent.end.dateTime) {
+    console.log(`  End: ${workEvent.end.dateTime}`);
+    const endDate = new Date(workEvent.end.dateTime);
+    console.log(`  End parsed: ${endDate.toISOString()}`);
+  }
+}
+
 // CalDAV helper functions for Nextcloud
 async function makeCalDAVRequest(
   url,
@@ -222,6 +239,9 @@ async function createNextcloudEvent(workEvent) {
     return null;
   }
 
+  // Log timezone information for debugging
+  logTimezoneInfo(workEvent, "Creating Nextcloud event");
+
   try {
     const event = new ical.Event();
 
@@ -249,9 +269,12 @@ async function createNextcloudEvent(workEvent) {
       );
     }
 
-    // Set start and end times
+    // Set start and end times with proper timezone handling
     if (workEvent.start.dateTime) {
+      // Parse the dateTime string which includes timezone info (e.g., "2024-01-15T10:00:00-05:00")
       const startDate = new Date(workEvent.start.dateTime);
+
+      // Create timezone-aware time object
       const startTime = new ical.Time({
         year: startDate.getFullYear(),
         month: startDate.getMonth() + 1,
@@ -261,11 +284,28 @@ async function createNextcloudEvent(workEvent) {
         second: startDate.getSeconds(),
         isDate: false,
       });
+
+      // If the original dateTime has timezone info, preserve it
+      if (
+        workEvent.start.dateTime.includes("T") &&
+        (workEvent.start.dateTime.includes("+") ||
+          workEvent.start.dateTime.includes("-"))
+      ) {
+        // Extract timezone offset from the original string
+        const tzMatch = workEvent.start.dateTime.match(/([+-]\d{2}:\d{2})$/);
+        if (tzMatch) {
+          startTime.timezone = tzMatch[1];
+        }
+      }
+
       event.component.addPropertyWithValue("dtstart", startTime);
     }
 
     if (workEvent.end.dateTime) {
+      // Parse the dateTime string which includes timezone info
       const endDate = new Date(workEvent.end.dateTime);
+
+      // Create timezone-aware time object
       const endTime = new ical.Time({
         year: endDate.getFullYear(),
         month: endDate.getMonth() + 1,
@@ -275,6 +315,20 @@ async function createNextcloudEvent(workEvent) {
         second: endDate.getSeconds(),
         isDate: false,
       });
+
+      // If the original dateTime has timezone info, preserve it
+      if (
+        workEvent.end.dateTime.includes("T") &&
+        (workEvent.end.dateTime.includes("+") ||
+          workEvent.end.dateTime.includes("-"))
+      ) {
+        // Extract timezone offset from the original string
+        const tzMatch = workEvent.end.dateTime.match(/([+-]\d{2}:\d{2})$/);
+        if (tzMatch) {
+          endTime.timezone = tzMatch[1];
+        }
+      }
+
       event.component.addPropertyWithValue("dtend", endTime);
     }
 
@@ -295,10 +349,30 @@ async function createNextcloudEvent(workEvent) {
     const eventId = workEvent.id.replace(/[^a-zA-Z0-9]/g, "_");
     const eventUrl = `${NEXTCLOUD_CALENDAR_URL}${eventId}.ics`;
 
-    // Convert event to iCalendar format
+    // Convert event to iCalendar format with timezone support
     const calendar = new ical.Component(["vcalendar", [], []]);
+
+    // Add timezone component if we have timezone-aware times
+    const startTime = event.component.getFirstPropertyValue("dtstart");
+    const endTime = event.component.getFirstPropertyValue("dtend");
+
+    if (startTime && startTime.timezone && startTime.timezone !== "UTC") {
+      // Add VTIMEZONE component for the timezone
+      const tzComponent = new ical.Component(["vtimezone", [], []]);
+      tzComponent.addPropertyWithValue("tzid", startTime.timezone);
+      calendar.addSubcomponent(tzComponent);
+    }
+
     calendar.addSubcomponent(event.component);
     const icalData = calendar.toString();
+
+    // Log the generated iCal data for debugging
+    console.log(
+      `Generated iCal data for Nextcloud event: ${event.component.getFirstPropertyValue(
+        "summary"
+      )}`
+    );
+    console.log(`iCal data preview: ${icalData.substring(0, 500)}...`);
 
     console.log(
       `Attempting to create Nextcloud event: ${event.component.getFirstPropertyValue(
@@ -322,6 +396,9 @@ async function createNextcloudEvent(workEvent) {
 
 // Update an existing Nextcloud event
 async function updateNextcloudEvent(eventId, workEvent) {
+  // Log timezone information for debugging
+  logTimezoneInfo(workEvent, "Updating Nextcloud event");
+
   try {
     const event = new ical.Event();
 
@@ -349,9 +426,12 @@ async function updateNextcloudEvent(eventId, workEvent) {
       );
     }
 
-    // Set start and end times
+    // Set start and end times with proper timezone handling
     if (workEvent.start.dateTime) {
+      // Parse the dateTime string which includes timezone info (e.g., "2024-01-15T10:00:00-05:00")
       const startDate = new Date(workEvent.start.dateTime);
+
+      // Create timezone-aware time object
       const startTime = new ical.Time({
         year: startDate.getFullYear(),
         month: startDate.getMonth() + 1,
@@ -361,11 +441,28 @@ async function updateNextcloudEvent(eventId, workEvent) {
         second: startDate.getSeconds(),
         isDate: false,
       });
+
+      // If the original dateTime has timezone info, preserve it
+      if (
+        workEvent.start.dateTime.includes("T") &&
+        (workEvent.start.dateTime.includes("+") ||
+          workEvent.start.dateTime.includes("-"))
+      ) {
+        // Extract timezone offset from the original string
+        const tzMatch = workEvent.start.dateTime.match(/([+-]\d{2}:\d{2})$/);
+        if (tzMatch) {
+          startTime.timezone = tzMatch[1];
+        }
+      }
+
       event.component.addPropertyWithValue("dtstart", startTime);
     }
 
     if (workEvent.end.dateTime) {
+      // Parse the dateTime string which includes timezone info
       const endDate = new Date(workEvent.end.dateTime);
+
+      // Create timezone-aware time object
       const endTime = new ical.Time({
         year: endDate.getFullYear(),
         month: endDate.getMonth() + 1,
@@ -375,6 +472,20 @@ async function updateNextcloudEvent(eventId, workEvent) {
         second: endDate.getSeconds(),
         isDate: false,
       });
+
+      // If the original dateTime has timezone info, preserve it
+      if (
+        workEvent.end.dateTime.includes("T") &&
+        (workEvent.end.dateTime.includes("+") ||
+          workEvent.end.dateTime.includes("-"))
+      ) {
+        // Extract timezone offset from the original string
+        const tzMatch = workEvent.end.dateTime.match(/([+-]\d{2}:\d{2})$/);
+        if (tzMatch) {
+          endTime.timezone = tzMatch[1];
+        }
+      }
+
       event.component.addPropertyWithValue("dtend", endTime);
     }
 
@@ -393,10 +504,30 @@ async function updateNextcloudEvent(eventId, workEvent) {
 
     const eventUrl = `${NEXTCLOUD_CALENDAR_URL}${eventId}.ics`;
 
-    // Convert event to iCalendar format
+    // Convert event to iCalendar format with timezone support
     const calendar = new ical.Component(["vcalendar", [], []]);
+
+    // Add timezone component if we have timezone-aware times
+    const startTime = event.component.getFirstPropertyValue("dtstart");
+    const endTime = event.component.getFirstPropertyValue("dtend");
+
+    if (startTime && startTime.timezone && startTime.timezone !== "UTC") {
+      // Add VTIMEZONE component for the timezone
+      const tzComponent = new ical.Component(["vtimezone", [], []]);
+      tzComponent.addPropertyWithValue("tzid", startTime.timezone);
+      calendar.addSubcomponent(tzComponent);
+    }
+
     calendar.addSubcomponent(event.component);
     const icalData = calendar.toString();
+
+    // Log the generated iCal data for debugging
+    console.log(
+      `Generated iCal data for Nextcloud event update: ${event.component.getFirstPropertyValue(
+        "summary"
+      )}`
+    );
+    console.log(`iCal data preview: ${icalData.substring(0, 500)}...`);
 
     console.log(
       `Attempting to update Nextcloud event: ${event.component.getFirstPropertyValue(
