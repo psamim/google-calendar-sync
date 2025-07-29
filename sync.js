@@ -154,12 +154,38 @@ function logTimezoneInfo(workEvent, eventType) {
     console.log(`  Start: ${workEvent.start.dateTime}`);
     const startDate = new Date(workEvent.start.dateTime);
     console.log(`  Start parsed: ${startDate.toISOString()}`);
+    console.log(
+      `  Start timezone offset: ${startDate.getTimezoneOffset()} minutes`
+    );
   }
   if (workEvent.end.dateTime) {
     console.log(`  End: ${workEvent.end.dateTime}`);
     const endDate = new Date(workEvent.end.dateTime);
     console.log(`  End parsed: ${endDate.toISOString()}`);
+    console.log(
+      `  End timezone offset: ${endDate.getTimezoneOffset()} minutes`
+    );
   }
+}
+
+// Helper function to extract timezone offset from dateTime string
+function extractTimezoneOffset(dateTimeString) {
+  if (!dateTimeString || typeof dateTimeString !== "string") {
+    return null;
+  }
+
+  // Match timezone offset patterns like +05:00, -05:00, +0530, -0530
+  const tzMatch = dateTimeString.match(/([+-]\d{2}:?\d{2})$/);
+  if (tzMatch) {
+    return tzMatch[1];
+  }
+
+  // If no explicit timezone, check if it's UTC (ends with Z)
+  if (dateTimeString.endsWith("Z")) {
+    return "UTC";
+  }
+
+  return null;
 }
 
 // CalDAV helper functions for Nextcloud
@@ -274,6 +300,9 @@ async function createNextcloudEvent(workEvent) {
       // Parse the dateTime string which includes timezone info (e.g., "2024-01-15T10:00:00-05:00")
       const startDate = new Date(workEvent.start.dateTime);
 
+      // Extract timezone offset from the original string
+      const timezoneOffset = extractTimezoneOffset(workEvent.start.dateTime);
+
       // Create timezone-aware time object
       const startTime = new ical.Time({
         year: startDate.getFullYear(),
@@ -285,17 +314,10 @@ async function createNextcloudEvent(workEvent) {
         isDate: false,
       });
 
-      // If the original dateTime has timezone info, preserve it
-      if (
-        workEvent.start.dateTime.includes("T") &&
-        (workEvent.start.dateTime.includes("+") ||
-          workEvent.start.dateTime.includes("-"))
-      ) {
-        // Extract timezone offset from the original string
-        const tzMatch = workEvent.start.dateTime.match(/([+-]\d{2}:\d{2})$/);
-        if (tzMatch) {
-          startTime.timezone = tzMatch[1];
-        }
+      // Set timezone if available
+      if (timezoneOffset) {
+        startTime.timezone = timezoneOffset;
+        console.log(`  Set start timezone to: ${timezoneOffset}`);
       }
 
       event.component.addPropertyWithValue("dtstart", startTime);
@@ -304,6 +326,9 @@ async function createNextcloudEvent(workEvent) {
     if (workEvent.end.dateTime) {
       // Parse the dateTime string which includes timezone info
       const endDate = new Date(workEvent.end.dateTime);
+
+      // Extract timezone offset from the original string
+      const timezoneOffset = extractTimezoneOffset(workEvent.end.dateTime);
 
       // Create timezone-aware time object
       const endTime = new ical.Time({
@@ -316,17 +341,10 @@ async function createNextcloudEvent(workEvent) {
         isDate: false,
       });
 
-      // If the original dateTime has timezone info, preserve it
-      if (
-        workEvent.end.dateTime.includes("T") &&
-        (workEvent.end.dateTime.includes("+") ||
-          workEvent.end.dateTime.includes("-"))
-      ) {
-        // Extract timezone offset from the original string
-        const tzMatch = workEvent.end.dateTime.match(/([+-]\d{2}:\d{2})$/);
-        if (tzMatch) {
-          endTime.timezone = tzMatch[1];
-        }
+      // Set timezone if available
+      if (timezoneOffset) {
+        endTime.timezone = timezoneOffset;
+        console.log(`  Set end timezone to: ${timezoneOffset}`);
       }
 
       event.component.addPropertyWithValue("dtend", endTime);
@@ -431,6 +449,9 @@ async function updateNextcloudEvent(eventId, workEvent) {
       // Parse the dateTime string which includes timezone info (e.g., "2024-01-15T10:00:00-05:00")
       const startDate = new Date(workEvent.start.dateTime);
 
+      // Extract timezone offset from the original string
+      const timezoneOffset = extractTimezoneOffset(workEvent.start.dateTime);
+
       // Create timezone-aware time object
       const startTime = new ical.Time({
         year: startDate.getFullYear(),
@@ -442,17 +463,10 @@ async function updateNextcloudEvent(eventId, workEvent) {
         isDate: false,
       });
 
-      // If the original dateTime has timezone info, preserve it
-      if (
-        workEvent.start.dateTime.includes("T") &&
-        (workEvent.start.dateTime.includes("+") ||
-          workEvent.start.dateTime.includes("-"))
-      ) {
-        // Extract timezone offset from the original string
-        const tzMatch = workEvent.start.dateTime.match(/([+-]\d{2}:\d{2})$/);
-        if (tzMatch) {
-          startTime.timezone = tzMatch[1];
-        }
+      // Set timezone if available
+      if (timezoneOffset) {
+        startTime.timezone = timezoneOffset;
+        console.log(`  Set start timezone to: ${timezoneOffset}`);
       }
 
       event.component.addPropertyWithValue("dtstart", startTime);
@@ -461,6 +475,9 @@ async function updateNextcloudEvent(eventId, workEvent) {
     if (workEvent.end.dateTime) {
       // Parse the dateTime string which includes timezone info
       const endDate = new Date(workEvent.end.dateTime);
+
+      // Extract timezone offset from the original string
+      const timezoneOffset = extractTimezoneOffset(workEvent.end.dateTime);
 
       // Create timezone-aware time object
       const endTime = new ical.Time({
@@ -473,17 +490,10 @@ async function updateNextcloudEvent(eventId, workEvent) {
         isDate: false,
       });
 
-      // If the original dateTime has timezone info, preserve it
-      if (
-        workEvent.end.dateTime.includes("T") &&
-        (workEvent.end.dateTime.includes("+") ||
-          workEvent.end.dateTime.includes("-"))
-      ) {
-        // Extract timezone offset from the original string
-        const tzMatch = workEvent.end.dateTime.match(/([+-]\d{2}:\d{2})$/);
-        if (tzMatch) {
-          endTime.timezone = tzMatch[1];
-        }
+      // Set timezone if available
+      if (timezoneOffset) {
+        endTime.timezone = timezoneOffset;
+        console.log(`  Set end timezone to: ${timezoneOffset}`);
       }
 
       event.component.addPropertyWithValue("dtend", endTime);

@@ -1,6 +1,10 @@
 # Use Node.js LTS version
 FROM node:20-slim
 
+# Set timezone to Central European Time to match user's location
+ENV TZ=Europe/Berlin
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 # Create app directory
 WORKDIR /usr/src/app
 
